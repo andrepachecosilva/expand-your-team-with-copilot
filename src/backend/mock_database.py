@@ -1,22 +1,118 @@
 """
-Configuração e setup do database MongoDB para a API da Mergington High School
+Mock database implementation for testing when MongoDB is not available
 """
 
-try:
-    from pymongo import MongoClient
-    # Try to connect to MongoDB
-    client = MongoClient('mongodb://localhost:27017/', serverSelectionTimeoutMS=1000)
-    # Test connection
-    client.admin.command('ping')
-    db = client['mergington_high']
-    activities_collection = db['activities']
-    teachers_collection = db['teachers']
-    print("Connected to MongoDB")
-except Exception as e:
-    print(f"MongoDB not available ({e}), using mock database")
-    from .mock_database import activities_collection, teachers_collection
-
 from argon2 import PasswordHasher
+
+# In-memory storage
+activities_data = {}
+teachers_data = {}
+
+# Mock collection classes
+class MockCollection:
+    def __init__(self, data_store):
+        self.data_store = data_store
+    
+    def find(self, query=None):
+        """Return all documents or filter by query"""
+        if query is None:
+            return list(self.data_store.values())
+        
+        results = []
+        for doc in self.data_store.values():
+            if self._matches_query(doc, query):
+                results.append(doc)
+        return results
+    
+    def find_one(self, query):
+        """Find a single document"""
+        if "_id" in query:
+            return self.data_store.get(query["_id"])
+        
+        for doc in self.data_store.values():
+            if self._matches_query(doc, query):
+                return doc
+        return None
+    
+    def insert_one(self, document):
+        """Insert a document"""
+        doc_id = document["_id"]
+        self.data_store[doc_id] = document
+        return type('InsertResult', (), {'inserted_id': doc_id})()
+    
+    def update_one(self, filter_query, update_query):
+        """Update a document"""
+        if "_id" in filter_query:
+            doc_id = filter_query["_id"]
+            if doc_id in self.data_store:
+                doc = self.data_store[doc_id]
+                if "$push" in update_query:
+                    for field, value in update_query["$push"].items():
+                        if field not in doc:
+                            doc[field] = []
+                        doc[field].append(value)
+                elif "$pull" in update_query:
+                    for field, value in update_query["$pull"].items():
+                        if field in doc and value in doc[field]:
+                            doc[field].remove(value)
+                return type('UpdateResult', (), {'modified_count': 1})()
+        return type('UpdateResult', (), {'modified_count': 0})()
+    
+    def count_documents(self, query):
+        """Count documents matching query"""
+        if query == {}:
+            return len(self.data_store)
+        
+        count = 0
+        for doc in self.data_store.values():
+            if self._matches_query(doc, query):
+                count += 1
+        return count
+    
+    def aggregate(self, pipeline):
+        """Simple aggregation - only handle the days aggregation"""
+        # This is a simplified implementation for the specific case used in the app
+        if len(pipeline) == 3 and pipeline[0]["$unwind"] == "$schedule_details.days":
+            days = set()
+            for doc in self.data_store.values():
+                if "schedule_details" in doc and "days" in doc["schedule_details"]:
+                    for day in doc["schedule_details"]["days"]:
+                        days.add(day)
+            return [{"_id": day} for day in sorted(days)]
+        return []
+    
+    def _matches_query(self, doc, query):
+        """Simple query matching"""
+        for key, value in query.items():
+            if key == "_id":
+                continue
+            if "." in key:
+                # Handle nested fields like "schedule_details.days"
+                parts = key.split(".")
+                current = doc
+                for part in parts:
+                    if part not in current:
+                        return False
+                    current = current[part]
+                
+                if isinstance(value, dict) and "$in" in value:
+                    if not any(item in current for item in value["$in"]):
+                        return False
+                elif isinstance(value, dict) and "$gte" in value:
+                    if current < value["$gte"]:
+                        return False
+                elif isinstance(value, dict) and "$lte" in value:
+                    if current > value["$lte"]:
+                        return False
+                elif current != value:
+                    return False
+            elif key not in doc or doc[key] != value:
+                return False
+        return True
+
+# Create mock collections
+activities_collection = MockCollection(activities_data)
+teachers_collection = MockCollection(teachers_data)
 
 # Methods
 def hash_password(password):
@@ -193,4 +289,3 @@ initial_teachers = [
         "role": "admin"
     }
 ]
-
