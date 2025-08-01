@@ -16,22 +16,29 @@ class MockCollection:
     def find(self, query=None):
         """Return all documents or filter by query"""
         if query is None:
-            return list(self.data_store.values())
+            # Return all documents with _id field
+            return [{"_id": key, **value} for key, value in self.data_store.items()]
         
         results = []
-        for doc in self.data_store.values():
-            if self._matches_query(doc, query):
-                results.append(doc)
+        for key, doc in self.data_store.items():
+            # Create full document with _id
+            full_doc = {"_id": key, **doc}
+            if self._matches_query(full_doc, query):
+                results.append(full_doc)
         return results
     
     def find_one(self, query):
         """Find a single document"""
         if "_id" in query:
-            return self.data_store.get(query["_id"])
+            doc = self.data_store.get(query["_id"])
+            if doc:
+                return {"_id": query["_id"], **doc}
+            return None
         
-        for doc in self.data_store.values():
-            if self._matches_query(doc, query):
-                return doc
+        for key, doc in self.data_store.items():
+            full_doc = {"_id": key, **doc}
+            if self._matches_query(full_doc, query):
+                return full_doc
         return None
     
     def insert_one(self, document):
@@ -74,7 +81,7 @@ class MockCollection:
         # This is a simplified implementation for the specific case used in the app
         if len(pipeline) == 3 and pipeline[0]["$unwind"] == "$schedule_details.days":
             days = set()
-            for doc in self.data_store.values():
+            for key, doc in self.data_store.items():
                 if "schedule_details" in doc and "days" in doc["schedule_details"]:
                     for day in doc["schedule_details"]["days"]:
                         days.add(day)
@@ -266,6 +273,17 @@ initial_activities = {
         },
         "max_participants": 16,
         "participants": ["william@mergington.edu", "jacob@mergington.edu"]
+    },
+    "Manga Maniacs": {
+        "description": "Explore as histórias fantásticas dos personagens mais interessantes dos Mangás japoneses (graphic novels).",
+        "schedule": "Terças às 19h",
+        "schedule_details": {
+            "days": ["Tuesday"],
+            "start_time": "19:00",
+            "end_time": "21:00"
+        },
+        "max_participants": 15,
+        "participants": []
     }
 }
 
